@@ -21,7 +21,7 @@ fn main() {
                 0 => { println!("No files found"); },
                 _ => { 
                     println!("Multiple matching files found, please refine your search or rename them:"); 
-                    for f in files { println!("\t{}", f.display())} 
+                    for f in files { println!("\t{}", f.display()) } 
                 }
             }
         },
@@ -32,7 +32,7 @@ fn main() {
 fn get_matching_files(dir: &Path, pattern: &str) -> Result<Vec<PathBuf>, String> {
     Ok(get_files(dir)?
         .into_iter()
-        .filter(|pathbuf| pathbuf_contains_pattern(pathbuf, pattern))
+        .filter(|pathbuf| pathbuf_contains_pattern_ignore_case(pathbuf, pattern))
         .collect()
     )
 }
@@ -55,13 +55,13 @@ fn get_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     }
 }
 
-fn pathbuf_contains_pattern(pathbuf: &PathBuf, pattern: &str) -> bool {
+fn pathbuf_contains_pattern_ignore_case(pathbuf: &PathBuf, pattern: &str) -> bool {
     match pathbuf.file_stem() {
         None => false,
         Some(os_str) => {
             match os_str.to_str() {
                 None => false,
-                Some(string) => string.contains(pattern)
+                Some(string) => string.to_lowercase().contains(&(pattern.to_lowercase()))
             }
         }
     }
