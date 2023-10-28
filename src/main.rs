@@ -1,90 +1,69 @@
+use pulldown_cmark::{html, Options, Parser};
 use std::env::{args, current_exe};
+use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use pulldown_cmark::{Parser, Options, html};
-
-macro_rules! exit {
-    ($($x:expr),*) => ({
-        eprintln!($($x),*);
-        std::process::exit(0);
-    });
-}
+use std::path::PathBuf;
 
 fn main() {
+    match do_main() {
+        Err(e) => eprintln!("{}", e),
+        Ok(s) => println!("{}", s),
+    };
+}
+
+fn do_main() -> Result<String, Box<dyn Error>> {
     let args: Vec<String> = args().collect();
 
     if args.len() != 2 {
-        exit!("Usage: cheatsheet <name>");
+        return Ok("Usage: cheatsheet <name>".into());
     }
 
-    let dir = match current_exe() {
-        Err(_) =>  exit!("Unable to get current folder"),
-        Ok(mut exe) => {
-            exe.pop();
-            exe
-        }
+    let dir = {
+        let mut exe = current_exe()?;
+        exe.pop();
+        exe
     };
 
-    let files: Vec<PathBuf> = match get_matching_files(&dir, &args[1]) {
-        Err(e) => exit!("{}", e),
-        Ok(files) => files
-    };
+    let files: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter(|result| result.is_ok())
+        .map(|result| result.unwrap().path())
+        .filter(|pathbuf| {
+            pathbuf.is_file() && pathbuf_contains_pattern_ignore_case(pathbuf, &args[1])
+        })
+        .collect();
 
     let mut file: PathBuf = match files.len() {
-        0 => exit!("No matching files found"),
+        0 => return Ok("No matching files found".to_owned()),
         1 => files[0].to_path_buf(),
-        _ => {
-            match check_markdown_condition(&files) {
-                Some(file) => file.to_path_buf(),
-                None => exit!("{}", create_multi_file_error(&files))
-            }
-        }
+        _ => match check_markdown_condition(&files) {
+            Some(file) => file.to_path_buf(),
+            None => contains_exact_string(&files, &args[1]).ok_or(multi_file_error(&files))?,
+        },
     };
 
     if let Some(ext) = file.extension().and_then(OsStr::to_str) {
         if ext == "md" {
-            file = match convert_markdown_to_html(&file) {
-                Err(e) => exit!("{}", e),
-                Ok(f) => f
-            };
+            file = convert_markdown_to_html(&file)?;
         }
     }
 
-    let filename = match file.as_path().file_name().and_then(OsStr::to_str) {
-        None => exit!("Unable to get filename"),
-        Some(f) => f
-    };
+    let filename = file
+        .as_path()
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or("Unable to get filename")?;
 
-    match opener::open(&file) {
-        Err(e) => exit!("{}", e),
-        Ok(()) => println!("Opened {}", filename)
-    };
-}
+    opener::open(&file)?;
 
-fn get_matching_files(dir: &Path, pattern: &str) -> Result<Vec<PathBuf>, String> {
-    if !dir.is_dir() {
-        return Err(String::from("You must provide a path to a directory, not to a file"));
-    }
-
-    let read_dir = match fs::read_dir(dir) {
-        Err(e) => return Err(e.to_string()),
-        Ok(read_dir) => read_dir
-    };
-
-    Ok(read_dir
-        .filter(|result| result.is_ok())
-        .map(|result| result.unwrap().path())
-        .filter(|pathbuf| pathbuf.is_file() && pathbuf_contains_pattern_ignore_case(pathbuf, pattern))
-        .collect()
-    )
+    Ok(format!("Opened {}", filename))
 }
 
 fn pathbuf_contains_pattern_ignore_case(pathbuf: &PathBuf, pattern: &str) -> bool {
     match pathbuf.file_stem().and_then(OsStr::to_str) {
         None => false,
-        Some(string) => string.to_lowercase().contains(&(pattern.to_lowercase()))
+        Some(string) => string.to_lowercase().contains(&(pattern.to_lowercase())),
     }
 }
 
@@ -96,11 +75,11 @@ fn check_markdown_condition(files: &Vec<PathBuf>) -> Option<&PathBuf> {
             Some(ext) => match ext {
                 "md" => match markdown {
                     Some(_) => return None,
-                    None => markdown = Some(file)
+                    None => markdown = Some(file),
                 },
                 "html" => (),
-                _ => return None
-            }
+                _ => return None,
+            },
         }
     }
     markdown
@@ -126,12 +105,24 @@ fn convert_markdown_to_html(markdown: &PathBuf) -> io::Result<PathBuf> {
     Ok(new_file_path)
 }
 
-fn create_multi_file_error(files: &Vec<PathBuf>) -> String {
-    let mut err = String::from("Multiple matching files found, please refine your search or rename them:"); 
+fn multi_file_error(files: &Vec<PathBuf>) -> String {
+    let mut err =
+        String::from("Multiple matching files found, please refine your search or rename them:");
     for file in files {
         if let Some(f) = file.as_path().file_name().and_then(OsStr::to_str) {
             err = format!("{}\n\t{}", err, f)
         }
     }
     err
+}
+
+fn contains_exact_string(files: &Vec<PathBuf>, string: &str) -> Option<PathBuf> {
+    for file in files {
+        if let Some(filename) = file.file_stem().and_then(OsStr::to_str) {
+            if filename.eq(string) {
+                return Some(file.to_path_buf());
+            }
+        }
+    }
+    None
 }
